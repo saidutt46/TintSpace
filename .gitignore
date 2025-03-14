@@ -1,0 +1,54 @@
+# Xcode
+#
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+
+# Ignore any Info.plist files (can contain sensitive data)
+Info.plist
+*.Info.plist
+
+# Ignore the GoogleService-Info.plist file (contains Firebase credentials)
+GoogleService-Info.plist
+
+# CocoaPods
+#
+Pods/
+
+# Carthage
+#
+Carthage/Build
+
+# fastlane
+#
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Code Injection
+#
+iOSInjectionProject/
+
+# Ignore Xcode workspace settings
+xcshareddata/
+
+# Ignore any .DS_Store files created by macOS
+.DS_Store
+
+# Other temp files
+*.swp
+*~.nib
