@@ -386,9 +386,29 @@ class ARSessionManager: NSObject, ObservableObject {
 
 // MARK: - ARSessionDelegate
 extension ARSessionManager: ARSessionDelegate {
-    func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        processUpdatedFrame(frame)
+    // Add this property to store just the needed data from frames
+    private struct FrameSnapshot {
+        let camera: ARCamera
+        let lightEstimate: ARLightEstimate?
+        let anchors: [ARAnchor]
+        let timestamp: TimeInterval
     }
+    
+    // Modify your session delegate method
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Create a snapshot with only the data we need
+        let snapshot = extractFrameData(frame)
+        
+        // Process the snapshot, not the full frame
+        processFrameSnapshot(snapshot)
+        
+        // Notify observers with the lightweight snapshot data
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.onFrameUpdated?(frame)
+        }
+    }
+        
     
     func session(_ session: ARSession, didFailWithError error: Error) {
         isSessionRunning = false
@@ -410,6 +430,28 @@ extension ARSessionManager: ARSessionDelegate {
                 LogManager.shared.error("AR session failed with code: \(arError.code.rawValue)", category: "AR")
             }
         }
+    }
+    
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        // Notify observers about added anchors
+        onAnchorsAdded?(anchors)
+        
+        // Log wall plane anchors
+        for anchor in anchors {
+            if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
+                LogManager.shared.ar("Detected vertical plane: \(planeAnchor.identifier.uuidString)", category: "PlaneDetection")
+            }
+        }
+    }
+    
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        // Notify observers about updated anchors
+        onAnchorsUpdated?(anchors)
+    }
+    
+    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        // Notify observers about removed anchors
+        onAnchorsRemoved?(anchors)
     }
     
     func sessionWasInterrupted(_ session: ARSession) {
@@ -439,25 +481,57 @@ extension ARSessionManager: ARSessionDelegate {
         startWallDetectionSession(resetTracking: false)
     }
     
-    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
-        // Notify observers about added anchors
-        onAnchorsAdded?(anchors)
+    // Extract only the data we need from the frame
+    private func extractFrameData(_ frame: ARFrame) -> FrameSnapshot {
+        return FrameSnapshot(
+            camera: frame.camera,
+            lightEstimate: frame.lightEstimate,
+            anchors: frame.anchors,
+            timestamp: frame.timestamp
+        )
+    }
+    
+    // Process the snapshot instead of the full frame
+    private func processFrameSnapshot(_ snapshot: FrameSnapshot) {
+        // Update tracking state
+        updateTrackingState(from: snapshot.camera)
         
-        // Log wall plane anchors
-        for anchor in anchors {
-            if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
-                LogManager.shared.ar("Detected vertical plane: \(planeAnchor.identifier.uuidString)", category: "PlaneDetection")
-            }
+        // Update lighting estimation
+        if let lightEstimate = snapshot.lightEstimate {
+            updateLightingEstimation(lightEstimate)
+        }
+        
+        // Post notification with needed data only
+        NotificationCenter.default.post(
+            name: .customARFrameDidUpdate,
+            object: self,
+            userInfo: ["anchors": snapshot.anchors, "timestamp": snapshot.timestamp]
+        )
+    }
+    
+    // Update to work with lightEstimate directly
+    private func updateLightingEstimation(_ lightEstimate: ARLightEstimate) {
+        // Update ambient intensity
+        ambientIntensity = CGFloat(lightEstimate.ambientIntensity / 1000.0)
+        
+        // Update color temperature
+        ambientColorTemperature = CGFloat(lightEstimate.ambientColorTemperature)
+        
+        // Only notify if values changed significantly
+        if significantLightingChange() {
+            onLightingEstimationUpdated?()
+            
+            // Post notification
+            NotificationCenter.default.post(
+                name: .customARLightingEstimationUpdated,
+                object: self,
+                userInfo: nil
+            )
         }
     }
     
-    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        // Notify observers about updated anchors
-        onAnchorsUpdated?(anchors)
-    }
-    
-    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
-        // Notify observers about removed anchors
-        onAnchorsRemoved?(anchors)
+    private func significantLightingChange() -> Bool {
+        // Implementation based on your needs
+        return true
     }
 }

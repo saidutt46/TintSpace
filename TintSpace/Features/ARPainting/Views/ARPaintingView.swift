@@ -30,15 +30,17 @@ struct ARPaintingView: View {
     /// State for tracking animation of status messages
     @State private var isStatusMessageAnimating = false
     
+    private let wallDetectionService: WallDetectionService
+
     // MARK: - Initialization
     
     /// Initialize with dependencies
     /// - Parameter arSessionManager: The AR session manager
-    init(arSessionManager: ARSessionManager) {
-        // Create and inject dependencies
-        let wallDetectionService = WallDetectionService(arSessionManager: arSessionManager)
+    init(arSessionManager: ARSessionManager, wallDetectionService: WallDetectionService) {
+//        arSessionManager = arSessionManager
+        self.wallDetectionService = wallDetectionService
         
-        // Initialize the view model with StateObject wrapper
+        // Initialize the view model with the existing services
         _viewModel = StateObject(wrappedValue: ARPaintingViewModel(
             arSessionManager: arSessionManager,
             wallDetectionService: wallDetectionService

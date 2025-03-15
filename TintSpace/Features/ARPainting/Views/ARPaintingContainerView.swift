@@ -20,6 +20,9 @@ struct ARPaintingContainerView: View {
     /// AR session manager - created once per container instance
     @StateObject private var arSessionManager = ARSessionManager()
     
+    /// Wall detection service - create ONCE at this level
+    @StateObject private var wallDetectionService: WallDetectionService
+       
     /// Status notification manager for app-wide status messages
     @StateObject private var statusManager = StatusNotificationManager()
     
@@ -28,17 +31,23 @@ struct ARPaintingContainerView: View {
     /// Whether to show a loading screen while ARKit initializes
     @State private var isLoading = true
     
+    init() {
+        // Create the wall detection service as a StateObject
+        // This ensures it's created ONCE and persisted
+        let service = WallDetectionService(arSessionManager: ARSessionManager())
+        _wallDetectionService = StateObject(wrappedValue: service)
+    }
+    
     // MARK: - Body
     
     var body: some View {
         ZStack {
             // Main AR view when not loading
             if !isLoading {
-                ARPaintingView(arSessionManager: arSessionManager)
+                ARPaintingView(arSessionManager: arSessionManager, wallDetectionService: wallDetectionService)
                     .environmentObject(statusManager)
                     .environmentObject(themeManager)
                     .edgesIgnoringSafeArea(.all)
-                    .transition(.opacity)
             } else {
                 // Loading screen
                 ARLoadingView {

@@ -124,6 +124,9 @@ class ARPaintingViewModel: ObservableObject {
         tapRecognizer.delegate = gestureDelegate
         arView.addGestureRecognizer(tapRecognizer)
         
+        // *** Critical Fix: Set up the wall detection event handlers ***
+        setupWallDetectionHandlers()
+        
         LogManager.shared.info(message: "AR view configured", category: "ARView")
     }
     
@@ -144,6 +147,8 @@ class ARPaintingViewModel: ObservableObject {
             type: .info,
             duration: 3.0
         )
+        
+        enableWallDebugMode()
     }
     
     /// Pause the AR session
@@ -429,6 +434,80 @@ class ARPaintingViewModel: ObservableObject {
         }
     }
     
+    /// Sets up wall detection handlers to visualize walls
+    private func setupWallDetectionHandlers() {
+        // Wall detected event
+        wallDetectionService.onWallDetected = { [weak self] wall in
+            guard let self = self, let arView = self.arView else { return }
+            
+            DispatchQueue.main.async {
+                var updatedWalls = self.detectedWalls
+                updatedWalls.append(wall)
+                self.updateDetectedWalls(updatedWalls)
+                
+                // Show status message for the first wall
+                if self.detectedWalls.count == 1 {
+                    self.showStatusMessage(
+                        text: "Wall detected! Tap to select it",
+                        type: .success,
+                        duration: 3.0
+                    )
+                } else if self.detectedWalls.count == 3 {
+                    // Show a helpful message after a few walls
+                    self.showStatusMessage(
+                        text: "Multiple walls detected",
+                        type: .success,
+                        duration: 2.0
+                    )
+                }
+                
+                // *** Critical Fix: Add the wall entity to the AR scene ***
+                self.addWallEntityToScene(wall)
+            }
+        }
+        
+        // Wall updated event
+        wallDetectionService.onWallUpdated = { [weak self] wall in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                // Update the wall in our tracked walls
+                var updatedWalls = self.detectedWalls
+                if let index = updatedWalls.firstIndex(where: { $0.id == wall.id }) {
+                    updatedWalls[index] = wall
+                }
+                self.updateDetectedWalls(updatedWalls)
+                
+                // Update selected wall if this is the selected one
+                if wall.id == self.selectedWall?.id {
+                    self.selectedWall = wall
+                }
+                
+                // *** Critical Fix: Update the wall entity in the scene ***
+                self.updateWallEntityInScene(wall)
+            }
+        }
+        
+        // Wall removed event
+        wallDetectionService.onWallRemoved = { [weak self] wallID in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                // Remove the wall from our tracked walls
+                let updatedWalls = self.detectedWalls.filter { $0.id != wallID }
+                self.updateDetectedWalls(updatedWalls)
+                
+                // If the removed wall was selected, clear selection
+                if self.selectedWall?.id == wallID {
+                    self.selectedWall = nil
+                }
+                
+                // *** Critical Fix: Remove the wall entity from the scene ***
+                self.removeWallEntityFromScene(withID: wallID)
+            }
+        }
+    }
+    
     /// Update the list of detected walls
     /// - Parameter walls: The updated wall list
     private func updateDetectedWalls(_ walls: [WallPlane]) {
@@ -489,6 +568,8 @@ class ARPaintingViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Entity Management Methods
+
     /// Add a wall entity to the AR scene
     /// - Parameter wall: The wall to add
     private func addWallEntityToScene(_ wall: WallPlane) {
@@ -507,12 +588,15 @@ class ARPaintingViewModel: ObservableObject {
         
         // Add to scene if not already added
         if wallEntity.parent == nil {
+            // Critical: Create an anchor entity and add the wall entity to it
             let anchorEntity = AnchorEntity(world: .zero)
             arView.scene.addAnchor(anchorEntity)
             anchorEntity.addChild(wallEntity)
+            
+            LogManager.shared.info(message: "Added wall entity to scene: \(wall.id.uuidString)", category: "ARView")
         }
     }
-    
+
     /// Update a wall entity in the AR scene
     /// - Parameter wall: The wall to update
     private func updateWallEntityInScene(_ wall: WallPlane) {
@@ -525,9 +609,11 @@ class ARPaintingViewModel: ObservableObject {
         }
         
         // The wall detection service handles the entity updates
-        _ = wallDetectionService.getOrCreateVisualEntity(for: wall)
+        let _ = wallDetectionService.getOrCreateVisualEntity(for: wall)
+        
+        LogManager.shared.info(message: "Updated wall entity in scene: \(wall.id.uuidString)", category: "ARView")
     }
-    
+
     /// Remove a wall entity from the AR scene
     /// - Parameter wallID: The ID of the wall to remove
     private func removeWallEntityFromScene(withID wallID: UUID) {
@@ -539,20 +625,42 @@ class ARPaintingViewModel: ObservableObject {
             return
         }
         
-        // Find the wall entity and remove it
         guard let arView = arView else { return }
         
         // Find and remove entity
-        arView.scene.anchors.forEach { anchor in
-            anchor.children.forEach { entity in
+        for anchor in arView.scene.anchors {
+            for entity in anchor.children {
                 if let modelEntity = entity as? ModelEntity,
                    let wall = detectedWalls.first(where: {
                        wallDetectionService.getOrCreateVisualEntity(for: $0) == modelEntity
                    }),
                    wall.id == wallID {
                     modelEntity.removeFromParent()
+                    LogManager.shared.info(message: "Removed wall entity from scene: \(wallID.uuidString)", category: "ARView")
+                    return
                 }
             }
         }
+    }
+    
+    func enableWallDebugMode() {
+        // Call this during testing to enable debug visualization
+        wallDetectionService.enableDebugVisualization()
+        
+        // Add debug info to the screen
+        let debugLabel = UILabel(frame: CGRect(x: 20, y: 50, width: 300, height: 80))
+        debugLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        debugLabel.textColor = .white
+        debugLabel.font = UIFont.systemFont(ofSize: 12)
+        debugLabel.numberOfLines = 4
+        debugLabel.text = "DEBUG MODE ON\nWalls should be visible with red wireframes\nDetected walls: \(detectedWalls.count)"
+        
+        // Update detected wall count every second
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            debugLabel.text = "DEBUG MODE ON\nWalls should be visible with red wireframes\nDetected walls: \(self.detectedWalls.count)"
+        }
+        
+        self.arView?.addSubview(debugLabel)
     }
 }
