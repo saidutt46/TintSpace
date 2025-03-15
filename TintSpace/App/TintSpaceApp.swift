@@ -9,18 +9,15 @@ import SwiftUI
 
 @main
 struct TintSpaceApp: App {
-    // App delegate for lifecycle events
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
-    // App-level state management
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var arSessionManager = ARSessionManager()
     
     var body: some Scene {
         WindowGroup {
             AppCoordinator()
-                .environmentObject(arSessionManager)
                 .environmentObject(themeManager)
+                .environmentObject(arSessionManager)
                 .onAppear {
                     LogManager.shared.info(message: "TintSpace UI appeared", category: "UI")
                 }

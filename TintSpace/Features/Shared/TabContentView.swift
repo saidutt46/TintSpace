@@ -7,9 +7,11 @@
 
 import SwiftUI
 
+/// Main content view that changes based on selected tab
 struct TabContentView: View {
     let selectedTab: AppTab
-    @Binding var navigationPath: NavigationPath
+    let startARExperience: () -> Void
+    
     @EnvironmentObject private var themeManager: ThemeManager
     
     var body: some View {
@@ -21,17 +23,8 @@ struct TabContentView: View {
             switch selectedTab {
             case .home:
                 NavigationStack {
-                    HomeView(startARExperience: {
-                        // This will be handled by the coordinator
-                    })
+                    HomeView(startARExperience: startARExperience)
                     .navigationBarTitleDisplayMode(.inline)
-                }
-                .transition(.opacity)
-                
-            case .ar:
-                NavigationStack(path: $navigationPath) {
-                    ARPaintingContainerView()
-                        .navigationBarHidden(true)
                 }
                 .transition(.opacity)
                 
