@@ -25,10 +25,8 @@ struct HomeView: View {
                 // Hero Section
                 VStack(spacing: 16) {
                     Text("TintSpace")
-                        .font(AppFont.hero)
-                        .foregroundColor(themeManager.current.primaryBrandColor)
-                        .opacity(isAnimating ? 1 : 0)
-                        .offset(y: isAnimating ? 0 : 20)
+                        .font(AppFont.title1)
+                        .foregroundColor(themeManager.current.primaryTextColor)
                     
                     Text("Visualize your walls in color")
                         .font(AppFont.title2)
@@ -37,20 +35,6 @@ struct HomeView: View {
                         .opacity(isAnimating ? 1 : 0)
                         .offset(y: isAnimating ? 0 : 15)
                         .padding(.bottom, 8)
-                    
-//                    // Paint brush illustration - this would be an image in a real app
-//                    ZStack {
-//                        RoundedRectangle(cornerRadius: 20)
-//                            .fill(themeManager.current.secondaryBackgroundColor)
-//                            .frame(height: 200)
-//                            .shadow(color: themeManager.current.shadowColor, radius: 10, x: 0, y: 5)
-//                        
-//                        // Placeholder for app screenshot/illustration
-//                        Text("AR Wall Painting Preview")
-//                            .foregroundColor(themeManager.current.secondaryTextColor)
-//                    }
-//                    .opacity(isAnimating ? 1 : 0)
-//                    .scaleEffect(isAnimating ? 1 : 0.9)
                 }
                 .padding(.top, 40)
                 

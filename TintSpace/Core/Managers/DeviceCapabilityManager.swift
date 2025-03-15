@@ -165,7 +165,6 @@ final class DeviceCapabilityManager {
         let magnetometer: Bool
         let motionProcessing: Bool
         let barometer: Bool
-        let locationServices: Bool
         let proximityMonitoring: Bool
         
         /// Whether the device has basic motion sensors (accelerometer and gyroscope)
@@ -435,15 +434,6 @@ final class DeviceCapabilityManager {
         // Check barometer
         let hasBarometer = CMAltimeter.isRelativeAltitudeAvailable()
         
-        // Check location services - with warning suppression
-        #if DEBUG
-        // Suppress warning in debug mode - we know it's not ideal but it's just for diagnostics
-        let hasLocationServices = CLLocationManager.locationServicesEnabled()
-        #else
-        // In production, be more conservative and default to false
-        let hasLocationServices = false
-        #endif
-        
         // Check proximity monitoring
         let hasProximity = UIDevice.current.isProximityMonitoringEnabled
         
@@ -453,7 +443,6 @@ final class DeviceCapabilityManager {
             magnetometer: hasMagnetometer,
             motionProcessing: hasMotionProcessing,
             barometer: hasBarometer,
-            locationServices: hasLocationServices,
             proximityMonitoring: hasProximity
         )
     }

@@ -113,7 +113,6 @@ struct CapabilityCheckView: View {
             capabilityRow("Accelerometer", deviceCapabilities.sensorCapabilities.accelerometer)
             capabilityRow("Gyroscope", deviceCapabilities.sensorCapabilities.gyroscope)
             capabilityRow("Magnetometer", deviceCapabilities.sensorCapabilities.magnetometer)
-            capabilityRow("Location Services", deviceCapabilities.sensorCapabilities.locationServices)
         }
         .padding()
         .background(Color.gray.opacity(0.1))

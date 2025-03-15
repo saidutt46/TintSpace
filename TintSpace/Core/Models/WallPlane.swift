@@ -5,6 +5,13 @@
 //  Created by Sai Dutt Ganduri on 3/13/25.
 //
 
+//
+//  WallPlane.swift
+//  TintSpace
+//
+//  Created for TintSpace on 3/13/25.
+//
+
 import Foundation
 import ARKit
 import RealityKit
@@ -14,8 +21,8 @@ struct WallPlane: Identifiable {
     // Unique identifier for the wall
     let id: UUID
     
-    // Reference to the ARKit anchor for this wall
-    let anchor: ARPlaneAnchor
+    // Reference to the ARKit anchor for this wall - has to be var for updates
+    var anchor: ARPlaneAnchor
     
     // Reference to the RealityKit entity representing this wall
     var entity: ModelEntity?
@@ -44,9 +51,18 @@ struct WallPlane: Identifiable {
     }
     
     // Convenience initializer
-    init(anchor: ARPlaneAnchor) {
-        self.id = UUID()
+    init(anchor: ARPlaneAnchor, id: UUID = UUID()) {
+        self.id = id
         self.anchor = anchor
+    }
+    
+    /// Update with a new plane anchor while preserving other properties
+    /// - Parameter newAnchor: The new plane anchor data
+    /// - Returns: Updated WallPlane with new anchor
+    func updated(with newAnchor: ARPlaneAnchor) -> WallPlane {
+        var updatedWall = self
+        updatedWall.anchor = newAnchor
+        return updatedWall
     }
 }
 
