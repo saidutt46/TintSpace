@@ -15,9 +15,27 @@ import AVFoundation
 class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     // MARK: - Properties
     
+    /// Delegate to receive AR session events
+    weak var delegate: ARSessionManagerDelegate?
+    
+    /// Current state of the AR wall painting experience
+    @Published private(set) var currentState: ARWallPaintingState = .initializing {
+        didSet {
+            // Notify delegate of state changes
+            delegate?.arSessionManager(self, didChangeState: currentState)
+            
+            // Log state changes
+            LogManager.shared.info(message: "AR session state changed: \(String(describing: currentState))", category: "AR")
+        }
+    }
+    
     /// The ARView from RealityKit
     weak var arView: ARView?
     
+    /// Collection of detected wall anchors
+    private(set) var detectedWallAnchors: [UUID: ARPlaneAnchor] = [:]
+    
+    /// Callback for when the AR session is initialized
     var onARSessionInitialized: (() -> Void)?
     
     /// Whether the AR session is running
@@ -29,8 +47,8 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
 
-    // In ARSessionManager
-    var messageManager: ARMessageManager?  // Non-optional but implicitly unwrapped
+    /// Message manager for user feedback
+    var messageManager: ARMessageManager?
     
     // MARK: - AR Session Management
     
@@ -64,10 +82,13 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     /// Start the AR session
     func startSession() {
         guard let arView = arView else {
-            sessionErrorMessage = "AR View not initialized"
-            LogManager.shared.error("Failed to start AR session: AR View not initialized", category: "AR")
+            let error = NSError(domain: "ARSessionManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "AR View not initialized"])
+            handleError(error)
             return
         }
+        
+        // Update state to initializing
+        currentState = .initializing
         
         // Check camera permissions
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
@@ -86,6 +107,9 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
                     self.sessionErrorMessage = nil
                     self.onARSessionInitialized?()
                     
+                    // Update state to scanning
+                    self.currentState = .scanning
+                    
                     self.messageManager?.showMessage(
                         "AR Ready! 🏠\nScan your space to detect walls.",
                         duration: 3.0,
@@ -95,8 +119,8 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
                     )
                 }
             } else {
-                self.sessionErrorMessage = "Camera access is required for AR"
-                LogManager.shared.error("Camera permission denied", category: "AR")
+                let error = NSError(domain: "ARSessionManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Camera access is required for AR"])
+                self.handleError(error)
             }
         }
     }
@@ -105,6 +129,7 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func pauseSession() {
         arView?.session.pause()
         isSessionRunning = false
+        currentState = .paused
         LogManager.shared.info(message: "AR session paused", category: "AR")
     }
     
@@ -112,23 +137,46 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func restartSession() {
         pauseSession()
         
+        // Clear the detected wall anchors
+        detectedWallAnchors.removeAll()
+        
         // Wait briefly before restarting to ensure clean state
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.startSession()
         }
     }
     
+    // MARK: - Error Handling
+    
+    /// Handle errors in the AR session
+    private func handleError(_ error: Error) {
+        isSessionRunning = false
+        sessionErrorMessage = error.localizedDescription
+        currentState = .failed(error)
+        
+        LogManager.shared.error("AR session error: \(error.localizedDescription)", category: "AR", error: error)
+        
+        // Notify the user via message manager
+        messageManager?.showMessage(
+            "AR session error: \(error.localizedDescription)",
+            duration: 5.0,
+            position: .center,
+            icon: "exclamationmark.triangle"
+        )
+        
+        // Notify delegate
+        delegate?.arSessionManager(self, didEncounterError: error)
+    }
+    
     // MARK: - ARSessionDelegate Methods
     
     func session(_ session: ARSession, didFailWithError error: Error) {
-        isSessionRunning = false
-        sessionErrorMessage = "AR Session failed: \(error.localizedDescription)"
-        LogManager.shared.error("AR session failed", category: "AR", error: error)
-        self.messageManager?.showMessage("AR session failed: \(error.localizedDescription)", duration: 5.0, position: .center, icon: "exclamationmark.triangle")
+        handleError(error)
     }
     
     func sessionWasInterrupted(_ session: ARSession) {
         isSessionRunning = false
+        currentState = .paused
         LogManager.shared.warning("AR session was interrupted", category: "AR")
     }
     
@@ -137,19 +185,64 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
         startSession()
     }
     
+    func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        switch camera.trackingState {
+        case .normal:
+            // If we were in a limited state before, update to scanning or wallsDetected
+            if case .limited = currentState {
+                currentState = detectedWallAnchors.isEmpty ? .scanning : .wallsDetected
+            }
+        case .notAvailable:
+            LogManager.shared.warning("AR tracking not available", category: "AR")
+        case .limited(let reason):
+            currentState = .limited(reason)
+            LogManager.shared.warning("AR tracking limited: \(reason)", category: "AR")
+        }
+    }
+    
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         for anchor in anchors {
-            if let planeAnchor = anchor as? ARPlaneAnchor {
-                if planeAnchor.alignment == .vertical {
-                    LogManager.shared.info(message: "Detected vertical plane (potential wall)", category: "AR")
-
-                    // Post notification for wall detection
-                    DispatchQueue.main.async {
-                        NotificationCenter.default.post(
-                            name: .wallDetected,
-                            object: nil
-                        )
-                    }
+            if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
+                // Store the detected wall anchor
+                detectedWallAnchors[planeAnchor.identifier] = planeAnchor
+                
+                LogManager.shared.info(message: "Detected vertical plane (potential wall)", category: "AR")
+                
+                // If this is the first wall detected, update state
+                if currentState == .scanning {
+                    currentState = .wallsDetected
+                }
+                
+                // Notify delegate
+                delegate?.arSessionManager(self, didDetectWall: planeAnchor)
+            }
+        }
+    }
+    
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        for anchor in anchors {
+            if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
+                // Update the stored wall anchor
+                detectedWallAnchors[planeAnchor.identifier] = planeAnchor
+                
+                // Notify delegate
+                delegate?.arSessionManager(self, didUpdateWall: planeAnchor)
+            }
+        }
+    }
+    
+    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        for anchor in anchors {
+            if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
+                // Remove the wall anchor from storage
+                detectedWallAnchors.removeValue(forKey: planeAnchor.identifier)
+                
+                // Notify delegate
+                delegate?.arSessionManager(self, didRemoveWall: planeAnchor)
+                
+                // If all walls are gone, update state
+                if detectedWallAnchors.isEmpty && (currentState == .wallsDetected || currentState == .wallSelected) {
+                    currentState = .scanning
                 }
             }
         }
