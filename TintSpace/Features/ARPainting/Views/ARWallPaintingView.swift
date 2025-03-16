@@ -2,14 +2,7 @@
 //  ARWallPaintingView.swift
 //  TintSpace
 //
-//  Created by Sai Dutt Ganduri on 3/14/25.
-//
-
-//
-//  ARWallPaintingView.swift
-//  TintSpace
-//
-//  Created by Sai Dutt Ganduri on 3/14/25.
+//  Updated for TintSpace on 3/16/25.
 //
 
 import SwiftUI
@@ -49,6 +42,12 @@ struct ARWallPaintingView: View {
                 topToolbar
                 
                 Spacer()
+                
+                // Status indicator for wall detection
+                if viewModel.hasDetectedWalls {
+                    wallDetectionIndicator
+                }
+                
                 messageOverlay
                 
                 // Bottom control panel
@@ -82,6 +81,11 @@ struct ARWallPaintingView: View {
             
             Spacer()
             
+            // Status indicator - show current state
+            stateIndicator
+            
+            Spacer()
+            
             // Close button
             Button(action: {
                 onClose()
@@ -98,6 +102,38 @@ struct ARWallPaintingView: View {
         .padding(.top)
     }
     
+    /// Status indicator showing current AR state
+    private var stateIndicator: some View {
+        HStack(spacing: 6) {
+            Text(stateLabel)
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(stateColor.opacity(0.7))
+                .cornerRadius(12)
+        }
+    }
+    
+    /// Wall detection indicator
+    private var wallDetectionIndicator: some View {
+        HStack {
+            Spacer()
+            
+            Text("\(viewModel.detectedWallCount) Wall(s) Detected")
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.blue.opacity(0.6))
+                .cornerRadius(12)
+            
+            Spacer()
+        }
+        .padding(.bottom, 8)
+        .transition(.opacity)
+    }
+    
     /// Primary UI notification message overlay
     private var messageOverlay: some View {
         GeometryReader { geometry in
@@ -111,8 +147,16 @@ struct ARWallPaintingView: View {
     
     /// Bottom controls for AR features
     private var controlBar: some View {
-        HStack {
+        HStack(spacing: 24) {
             IconButton(image: "reset", label: "Reset View", action: viewModel.resetARSession, renderAsTemplate: true)
+            // Show color picker when a wall is selected
+            if viewModel.selectedWallID != nil {
+                IconButton(image: "palette", label: "Color Picker", action: viewModel.resetARSession, renderAsTemplate: true)
+            }
+            
+            if viewModel.selectedWallID != nil {
+                IconButton(image: "settings", label: "Deselect", action: viewModel.clearWallSelection, renderAsTemplate: true)
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 20)
@@ -120,6 +164,69 @@ struct ARWallPaintingView: View {
         .background(Color.black.opacity(0.8))
     }
     
+    // MARK: - Helper Methods
+    
+    /// Get the appropriate label for the current AR state
+    private var stateLabel: String {
+        switch viewModel.currentARState {
+        case .initializing:
+            return "Initializing"
+        case .scanning:
+            return "Scanning for Walls"
+        case .wallsDetected:
+            return "Walls Detected"
+        case .wallSelected:
+            return "Wall Selected"
+        case .colorApplied:
+            return "Color Applied"
+        case .limited(let reason):
+            return "Limited: \(limitedTrackingLabel(for: reason))"
+        case .failed:
+            return "AR Failed"
+        case .paused:
+            return "AR Paused"
+        }
+    }
+    
+    /// Get the appropriate color for the current AR state
+    private var stateColor: Color {
+        switch viewModel.currentARState {
+        case .initializing:
+            return .gray
+        case .scanning:
+            return .orange
+        case .wallsDetected:
+            return .blue
+        case .wallSelected:
+            return .green
+        case .colorApplied:
+            return .purple
+        case .limited:
+            return .yellow
+        case .failed:
+            return .red
+        case .paused:
+            return .gray
+        }
+    }
+    
+    /// Get a user-friendly label for limited tracking states
+    private func limitedTrackingLabel(for reason: ARCamera.TrackingState.Reason) -> String {
+        switch reason {
+        case .initializing:
+            return "Starting Up"
+        case .excessiveMotion:
+            return "Moving Too Fast"
+        case .insufficientFeatures:
+            return "Not Enough Features"
+        case .relocalizing:
+            return "Relocating"
+        @unknown default:
+            return "Unknown"
+        }
+    }
+    
+    /// Calculate message position based on specified position type
     private func messagePosition(for position: ARMessageManager.MessagePosition, in geometry: GeometryProxy) -> CGPoint {
         switch position {
         case .top:

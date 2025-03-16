@@ -2,14 +2,7 @@
 //  ARWallPaintingViewModel.swift
 //  TintSpace
 //
-//  Created by Sai Dutt Ganduri on 3/14/25.
-//
-
-//
-//  ARWallPaintingViewModel.swift
-//  TintSpace
-//
-//  Created by Sai Dutt Ganduri on 3/14/25.
+//  Updated for TintSpace on 3/16/25.
 //
 
 import SwiftUI
@@ -27,14 +20,16 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     /// Whether any walls have been detected
     @Published var hasDetectedWalls = false
     
-    /// Collection of detected wall anchors
-    @Published var detectedWallAnchors: [UUID: ARPlaneAnchor] = [:]
+    /// Currently selected wall ID
+    @Published private(set) var selectedWallID: UUID?
     
     /// Loading state for the AR view
     @Published var isLoading = true
     
     /// Message manager for user feedback
     @Published var messageManager = ARMessageManager()
+    
+    @Published var detectedWallCount: Int = 0
     
     // MARK: - Private Properties
     
@@ -55,6 +50,36 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
         // Configure the session manager
         arSessionManager.messageManager = messageManager
         arSessionManager.delegate = self
+        
+        setupSubscriptions()
+    }
+    
+    // MARK: - Setup Methods
+    
+    /// Set up subscriptions to wall entity events
+    private func setupSubscriptions() {
+        // Subscribe to wall selection events
+        arSessionManager.wallEntityManager.wallSelectedPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] wall in
+                self?.selectedWallID = wall?.id
+            }
+            .store(in: &cancellables)
+        
+        // Subscribe to wall collection changes
+        arSessionManager.wallEntityManager.wallDetectedPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateWallCount()
+            }
+            .store(in: &cancellables)
+
+        arSessionManager.wallEntityManager.wallRemovedPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateWallCount()
+            }
+            .store(in: &cancellables)
     }
     
     // MARK: - AR Setup
@@ -63,6 +88,9 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     func setupARView(_ arView: ARView) {
         self.arView = arView
         arSessionManager.arView = arView
+        
+        // Add tap gesture recognizer
+        setupTapGesture(in: arView)
         
         // Set up callback for session initialization
         arSessionManager.onARSessionInitialized = { [weak self] in
@@ -74,6 +102,39 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
             if self?.isLoading == true {
                 self?.finishLoading()
                 LogManager.shared.warning("AR initialization timed out", category: "AR")
+            }
+        }
+    }
+    
+    /// Set up tap gesture for wall selection
+    private func setupTapGesture(in arView: ARView) {
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        arView.addGestureRecognizer(tapGesture)
+    }
+    
+    /// Handle tap on AR view
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard let arView = arView else { return }
+        
+        // Get the location of the tap in the AR view
+        let location = gesture.location(in: arView)
+        
+        // Perform ray cast to detect wall
+        let results = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .vertical)
+        
+        if let firstResult = results.first {
+            if let planeAnchor = firstResult.anchor as? ARPlaneAnchor {
+                // Get the wall entity and select it
+                if let wall = arSessionManager.wallEntityManager.getWall(withID: planeAnchor.identifier) {
+                    arSessionManager.wallEntityManager.selectWall(wall)
+                    
+                    // Provide haptic feedback
+                    let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+                    feedbackGenerator.prepare()
+                    feedbackGenerator.impactOccurred()
+                    
+                    LogManager.shared.info(message: "User tapped and selected wall \(planeAnchor.identifier)", category: "ARViewModel")
+                }
             }
         }
     }
@@ -91,8 +152,59 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     /// Reset the AR session
     func resetARSession() {
         hasDetectedWalls = false
-        detectedWallAnchors.removeAll()
+        selectedWallID = nil
         arSessionManager.restartSession()
+    }
+    
+    // MARK: - Wall Actions
+    
+    /// Apply a color to the selected wall
+    /// - Parameter color: The color to apply
+    func applyColorToSelectedWall(_ color: UIColor) {
+        if arSessionManager.wallEntityManager.applyColorToSelectedWall(color) {
+            // Update state
+            currentARState = .colorApplied
+            
+            // Show feedback
+            messageManager.showMessage(
+                "Color applied!",
+                duration: 2.0,
+                position: .bottom,
+                icon: "paintbrush.fill",
+                isImmediate: false
+            )
+        }
+    }
+    
+    /// Set the paint finish for the selected wall
+    /// - Parameter finish: The paint finish to apply
+    func setPaintFinishForSelectedWall(_ finish: WallEntity.PaintFinish) {
+        if let selectedWall = getSelectedWall() {
+            selectedWall.setPaintFinish(finish)
+            
+            // Update visualization
+            selectedWall.updateVisualization()
+            
+            // Show feedback
+            messageManager.showMessage(
+                "Applied \(String(describing: finish)) finish",
+                duration: 2.0,
+                position: .bottom,
+                icon: "paintpalette",
+                isImmediate: false
+            )
+        }
+    }
+    
+    /// Get the currently selected wall entity
+    /// - Returns: The selected wall entity if any
+    func getSelectedWall() -> WallEntity? {
+        return selectedWallID.flatMap { arSessionManager.wallEntityManager.getWall(withID: $0) }
+    }
+    
+    /// Clear the current wall selection
+    func clearWallSelection() {
+        arSessionManager.wallEntityManager.clearSelection()
     }
     
     // MARK: - UI Actions
@@ -100,7 +212,13 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     /// Show help information
     func showHelp() {
         LogManager.shared.info(message: "Help action triggered", category: "UI")
-        // In a real implementation, this would show a help overlay or tutorial
+        messageManager.showMessage(
+            "Tap on any detected wall to select it.\nThen choose a color to apply.",
+            duration: 4.0,
+            position: .center,
+            icon: "info.circle",
+            isImmediate: true
+        )
     }
     
     // MARK: - ARSessionManagerDelegate
@@ -128,45 +246,10 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     
     func arSessionManager(_ manager: ARSessionManager, didDetectWall anchor: ARPlaneAnchor) {
         DispatchQueue.main.async {
-            // Store the detected wall anchor
-            self.detectedWallAnchors[anchor.identifier] = anchor
-            
             // Update UI state
             self.hasDetectedWalls = true
             
-            // Show user feedback
-            self.messageManager.showMessage(
-                "Wall detected!",
-                duration: 2.0,
-                position: .center,
-                icon: "checkmark.circle",
-                isImmediate: false
-            )
-            
-            LogManager.shared.info(message: "ViewModel received wall detection: \(anchor.identifier)", category: "ARViewModel")
-        }
-    }
-    
-    func arSessionManager(_ manager: ARSessionManager, didUpdateWall anchor: ARPlaneAnchor) {
-        DispatchQueue.main.async {
-            // Update the stored wall anchor
-            self.detectedWallAnchors[anchor.identifier] = anchor
-            
-            LogManager.shared.info(message: "ViewModel received wall update: \(anchor.identifier)", category: "ARViewModel")
-        }
-    }
-    
-    func arSessionManager(_ manager: ARSessionManager, didRemoveWall anchor: ARPlaneAnchor) {
-        DispatchQueue.main.async {
-            // Remove the wall anchor from storage
-            self.detectedWallAnchors.removeValue(forKey: anchor.identifier)
-            
-            // Update UI state if all walls are gone
-            if self.detectedWallAnchors.isEmpty {
-                self.hasDetectedWalls = false
-            }
-            
-            LogManager.shared.info(message: "ViewModel received wall removal: \(anchor.identifier)", category: "ARViewModel")
+//            LogManager.shared.info(message: "ViewModel received wall detection: \(anchor.identifier)", category: "ARViewModel")
         }
     }
     
@@ -219,5 +302,9 @@ class ARWallPaintingViewModel: ObservableObject, ARSessionManagerDelegate {
     private func finishLoading() {
         isLoading = false
         LogManager.shared.info(message: "AR view initialization completed", category: "ARViewModel")
+    }
+    
+    private func updateWallCount() {
+        detectedWallCount = arSessionManager.wallEntityManager.walls.count
     }
 }

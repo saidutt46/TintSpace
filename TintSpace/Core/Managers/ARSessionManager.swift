@@ -2,7 +2,7 @@
 //  ARSessionManager.swift
 //  TintSpace
 //
-//  Created for TintSpace on 3/13/25.
+//  Updated for TintSpace on 3/16/25.
 //
 
 import Foundation
@@ -30,10 +30,17 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     }
     
     /// The ARView from RealityKit
-    weak var arView: ARView?
+    weak var arView: ARView? {
+        didSet {
+            // Set the scene in the wall entity manager when ARView changes
+            if let scene = arView?.scene {
+                wallEntityManager.setScene(scene)
+            }
+        }
+    }
     
-    /// Collection of detected wall anchors
-    private(set) var detectedWallAnchors: [UUID: ARPlaneAnchor] = [:]
+    /// Wall entity manager for tracking detected walls
+    let wallEntityManager: WallEntityManager
     
     /// Callback for when the AR session is initialized
     var onARSessionInitialized: (() -> Void)?
@@ -46,9 +53,72 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
-
+    
     /// Message manager for user feedback
     var messageManager: ARMessageManager?
+    
+    // MARK: - Initialization
+    
+    init(wallEntityManager: WallEntityManager = WallEntityManager()) {
+        self.wallEntityManager = wallEntityManager
+        super.init()
+        
+        // Set up Combine subscriptions for wall entity events
+        setupSubscriptions()
+    }
+    
+    // MARK: - Private Methods
+    
+    /// Set up Combine subscriptions for wall entity events
+    private func setupSubscriptions() {
+        // Listen for wall detection events
+        wallEntityManager.wallDetectedPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] wall in
+                guard let self = self else { return }
+                
+                // Update state if needed
+                if self.currentState == .scanning {
+                    self.currentState = .wallsDetected
+                }
+                
+                // Notify user via message manager
+                self.messageManager?.showMessage(
+                    "Wall detected!",
+                    duration: 2.0,
+                    position: .center,
+                    icon: "checkmark.circle",
+                    isImmediate: false
+                )
+            }
+            .store(in: &cancellables)
+        
+        // Listen for wall selection events
+        wallEntityManager.wallSelectedPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] wall in
+                guard let self = self else { return }
+                
+                // Update state based on wall selection
+                if let _ = wall {
+                    self.currentState = .wallSelected
+                    
+                    // Notify user via message manager
+                    self.messageManager?.showMessage(
+                        "Wall selected! Choose a color to apply.",
+                        duration: 2.0,
+                        position: .bottom,
+                        icon: "hand.tap",
+                        isImmediate: false
+                    )
+                } else if self.wallEntityManager.walls.isEmpty {
+                    self.currentState = .scanning
+                } else {
+                    self.currentState = .wallsDetected
+                }
+            }
+            .store(in: &cancellables)
+    }
     
     // MARK: - AR Session Management
     
@@ -137,8 +207,10 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func restartSession() {
         pauseSession()
         
-        // Clear the detected wall anchors
-        detectedWallAnchors.removeAll()
+        // Clear all wall entities
+        for wallID in wallEntityManager.walls.keys {
+            wallEntityManager.removeWall(withID: wallID)
+        }
         
         // Wait briefly before restarting to ensure clean state
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -190,7 +262,7 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
         case .normal:
             // If we were in a limited state before, update to scanning or wallsDetected
             if case .limited = currentState {
-                currentState = detectedWallAnchors.isEmpty ? .scanning : .wallsDetected
+                currentState = wallEntityManager.walls.isEmpty ? .scanning : .wallsDetected
             }
         case .notAvailable:
             LogManager.shared.warning("AR tracking not available", category: "AR")
@@ -203,10 +275,8 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         for anchor in anchors {
             if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
-                // Store the detected wall anchor
-                detectedWallAnchors[planeAnchor.identifier] = planeAnchor
-                
-                LogManager.shared.info(message: "Detected vertical plane (potential wall)", category: "AR")
+                // Create and register a new wall entity
+                let wall = wallEntityManager.createAndRegisterWall(from: planeAnchor)
                 
                 // If this is the first wall detected, update state
                 if currentState == .scanning {
@@ -222,8 +292,8 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         for anchor in anchors {
             if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
-                // Update the stored wall anchor
-                detectedWallAnchors[planeAnchor.identifier] = planeAnchor
+                // Update the wall entity with the new anchor
+                wallEntityManager.updateWall(with: planeAnchor)
                 
                 // Notify delegate
                 delegate?.arSessionManager(self, didUpdateWall: planeAnchor)
@@ -234,14 +304,14 @@ class ARSessionManager: NSObject, ARSessionDelegate, ObservableObject {
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
         for anchor in anchors {
             if let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .vertical {
-                // Remove the wall anchor from storage
-                detectedWallAnchors.removeValue(forKey: planeAnchor.identifier)
+                // Remove the wall entity
+                wallEntityManager.removeWall(withID: planeAnchor.identifier)
                 
                 // Notify delegate
                 delegate?.arSessionManager(self, didRemoveWall: planeAnchor)
                 
                 // If all walls are gone, update state
-                if detectedWallAnchors.isEmpty && (currentState == .wallsDetected || currentState == .wallSelected) {
+                if wallEntityManager.walls.isEmpty && (currentState == .wallsDetected || currentState == .wallSelected) {
                     currentState = .scanning
                 }
             }
