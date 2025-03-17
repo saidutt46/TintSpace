@@ -79,11 +79,28 @@ class WallEntityManager: ObservableObject {
     /// - Returns: The created wall entity
     @discardableResult
     func createAndRegisterWall(from anchor: ARPlaneAnchor) -> WallEntity {
+        // Check if a wall with this ID already exists
+        if let existingWall = walls[anchor.identifier] {
+            // Update the existing wall
+            existingWall.update(with: anchor)
+            return existingWall
+        }
+        
         // Create new wall entity
         let wall = WallEntity(anchor: anchor)
         
+        // Set up visualization if we have a scene
+        if let arScene = arScene {
+            wall.setupVisualization(in: arScene)
+        }
+        
         // Register it
-        registerWall(wall)
+        walls[anchor.identifier] = wall
+        
+        // Notify subscribers
+        wallDetectedPublisher.send(wall)
+        
+        LogManager.shared.info(message: "Created and registered wall with ID: \(anchor.identifier)", category: "WallManager")
         
         return wall
     }
@@ -129,11 +146,8 @@ class WallEntityManager: ObservableObject {
         }
         
         // Remove visualization entity if it exists
-        if let entity = wall.visualEntity, let arScene = arScene {
-            // Find and remove the entity from the scene
-            if let anchorEntity = entity.anchor {
-                arScene.removeAnchor(anchorEntity)
-            }
+        if let anchorEntity = wall.anchorEntity, let arScene = arScene {
+            arScene.removeAnchor(anchorEntity)
         }
         
         // Remove from dictionary
@@ -272,5 +286,66 @@ class WallEntityManager: ObservableObject {
         
         LogManager.shared.info(message: "Applied color to wall \(wallID)", category: "WallManager")
         return true
+    }
+    
+    /// Perform a raycast to find a wall at a given position
+    /// - Parameters:
+    ///   - origin: The origin point of the ray
+    ///   - direction: The direction of the ray
+    /// - Returns: The wall entity and distance if found, nil otherwise
+    func raycast(from origin: SIMD3<Float>, direction: SIMD3<Float>) -> (wall: WallEntity, distance: Float)? {
+        var closestWall: WallEntity?
+        var closestDistance: Float = Float.greatestFiniteMagnitude
+        
+        // Check each wall for intersection
+        for wall in walls.values {
+            // Simple plane-ray intersection
+            let wallNormal = wall.normal
+            let wallPoint = wall.center
+            
+            // Compute dot product of ray direction and wall normal
+            let denominator = simd_dot(wallNormal, direction)
+            
+            // Skip if ray is parallel to wall
+            if abs(denominator) < 0.0001 {
+                continue
+            }
+            
+            // Calculate distance along ray to intersection
+            let t = simd_dot(wallNormal, wallPoint - origin) / denominator
+            
+            // Skip if intersection is behind ray origin
+            if t < 0 {
+                continue
+            }
+            
+            // Calculate intersection point
+            let intersection = origin + direction * t
+            
+            // Check if intersection is within wall bounds
+            let localPos = intersection - wall.center
+            let width = wall.dimensions.x
+            let height = 2.4  // Standard wall height
+            
+            // Transform to local coordinates based on wall orientation
+            let localX = simd_dot(localPos, wall.anchor.transform.columns.0.xyz)
+            let localY = simd_dot(localPos, wall.anchor.transform.columns.1.xyz)
+            
+            if abs(localX) > width / 2 || abs(localY) > Float(height) / 2 {
+                continue
+            }
+            
+            // Check if this is the closest wall so far
+            if t < closestDistance {
+                closestDistance = t
+                closestWall = wall
+            }
+        }
+        
+        if let wall = closestWall {
+            return (wall, closestDistance)
+        }
+        
+        return nil
     }
 }
