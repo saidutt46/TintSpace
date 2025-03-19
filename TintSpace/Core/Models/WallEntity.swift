@@ -357,38 +357,36 @@ class WallEntity: Identifiable {
         // Create an anchor entity to position the wall
         let anchorEntity = AnchorEntity(anchor: anchor)
         
-        // 1) Create a simple unlit material for the wall
-        var unlitMaterial = SimpleMaterial(color: .white, roughness: 0, isMetallic: false)
-//        unlitMaterial.lightingModel = .unlit  // <-- Important to keep it from turning gray
-        
-        // Generate a plane mesh
+        // Create main wall plane with visualization
         let wallMesh = MeshResource.generatePlane(width: width, height: Float(height))
         
-        // Create the wall entity
-        let wallEntity = ModelEntity(mesh: wallMesh, materials: [unlitMaterial])
+        // IMPROVED: More opaque, neutral white material with subtle shadows
+        var wallMaterial = PhysicallyBasedMaterial()
+        wallMaterial.baseColor = PhysicallyBasedMaterial.BaseColor(tint: UIColor(white: 0.98, alpha: 0.25))
+        wallMaterial.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: 0.85)
+        wallMaterial.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: 0.0)
         
-        // Create a border entity (same as before)
-        let borderEntity = createBorderMesh(width: width, height: Float(height), thickness: 0.01)
+        // Create the main wall entity
+        let wallEntity = ModelEntity(mesh: wallMesh, materials: [wallMaterial])
         
-        // Rotate the plane to stand upright
+        // Create border entity with thinner, more subtle edges
+        let borderEntity = createBorderMesh(width: width, height: Float(height), thickness: 0.005)
+        
+        // Position logic (same as before)
         let rotation = simd_quatf(angle: -.pi/2, axis: [1, 0, 0])
         wallEntity.transform = Transform(rotation: rotation)
-        
-        // Slightly offset the border so it doesn’t Z-fight
-        borderEntity.transform = Transform(rotation: rotation,
-                                           translation: [0, 0, -0.001])
+        borderEntity.transform = Transform(rotation: rotation, translation: [0, 0, -0.001])
         
         // Add both to the anchor
         anchorEntity.addChild(wallEntity)
         anchorEntity.addChild(borderEntity)
         
-        // 2) Always add a label and ensure it’s in front of the plane
+        // Create improved classification label
         let classification = getClassificationDescription(for: anchor)
-        let classificationEntity = createClassificationLabel(text: classification, width: width)
+        let classificationEntity = createModernLabel(text: classification, width: width)
         
-        // Position the label in front (+Z) so it isn’t hidden behind the plane
+        // Position label to be more visible
         classificationEntity.position = [0, 0, -0.05]
-        // (If you still don’t see it, try 0.1 or -0.05, depending on plane orientation)
         
         anchorEntity.addChild(classificationEntity)
         
@@ -401,8 +399,84 @@ class WallEntity: Identifiable {
         if let scene = scene {
             scene.addAnchor(anchorEntity)
         }
+    }
+    
+    private func createModernLabel(text: String, width: Float) -> ModelEntity {
+        // Create parent entity
+        let labelEntity = ModelEntity()
         
-        LogManager.shared.info(message: "Set up visualization for wall \(id)", category: "WallEntity")
+        // Modern pill shape with rounded corners
+        let labelWidth: Float = max(0.2, min(width * 0.3, 0.4))
+        let labelHeight: Float = 0.06
+        let labelDepth: Float = 0.01
+        
+        // Create a modern pill shape with brighter colors
+        let pillMesh = MeshResource.generateBox(
+            width: labelWidth,
+            height: labelHeight,
+            depth: labelDepth,
+            cornerRadius: labelHeight/2
+        )
+        
+        // Create a gradient-like effect with a brighter blue
+        let pillColor = UIColor(red: 0.0, green: 0.42, blue: 0.95, alpha: 0.85)
+        
+        // Create the pill entity
+        let pillEntity = ModelEntity(
+            mesh: pillMesh,
+            materials: [SimpleMaterial(color: pillColor, isMetallic: false)]
+        )
+        
+        // Add glossy effect by adding a subtle highlight
+        let highlightMesh = MeshResource.generatePlane(
+            width: labelWidth * 0.9,
+            height: labelHeight * 0.3
+        )
+        
+        let highlightEntity = ModelEntity(
+            mesh: highlightMesh,
+            materials: [SimpleMaterial(color: UIColor(white: 1.0, alpha: 0.2), isMetallic: false)]
+        )
+        
+        // Position highlight at the top of the pill
+        highlightEntity.position = [0, labelHeight * 0.25, labelDepth/2 + 0.001]
+        
+        // Add text with better styling
+        let textEntity = ModelEntity(
+            mesh: .generateText(
+                text,
+                extrusionDepth: 0.005,
+                font: .systemFont(ofSize: 0.03, weight: .semibold),
+                containerFrame: .zero,
+                alignment: .center,
+                lineBreakMode: .byTruncatingTail
+            ),
+            materials: [SimpleMaterial(color: .white, isMetallic: false)]
+        )
+        
+        // Position text slightly in front
+        textEntity.position = [0, 0, labelDepth/2 + 0.002]
+        
+        // Add all components
+        pillEntity.addChild(highlightEntity)
+        pillEntity.addChild(textEntity)
+        labelEntity.addChild(pillEntity)
+        
+        // Handle rotation for correct orientation
+        if #available(iOS 18.0, *) {
+            labelEntity.components.set(BillboardComponent())
+        } else {
+            let wallRotation = simd_quatf(angle: -.pi/2, axis: [1, 0, 0])
+            let correctionRotation = wallRotation.inverse
+            
+            labelEntity.transform = Transform(
+                scale: [1, 1, 1],
+                rotation: correctionRotation,
+                translation: [0, 0, 0]
+            )
+        }
+        
+        return labelEntity
     }
 
     
@@ -528,7 +602,6 @@ class WallEntity: Identifiable {
     /// Update the visualization based on current state
     func updateVisualization() {
         guard let visualEntity = visualEntity, let borderEntity = borderEntity else {
-            LogManager.shared.warning("Attempted to update visualization for wall \(id) but visual entities don't exist", category: "WallEntity")
             return
         }
         
@@ -538,23 +611,22 @@ class WallEntity: Identifiable {
         // Get the border edges
         let borderEdges = borderEntity.children.compactMap { $0 as? ModelEntity }
         
-        // Update wall material based on selection state and color
         if isSelected {
-            // Selected wall has a blue highlight with some transparency
+            // IMPROVED: More vibrant selection highlight
             var material = PhysicallyBasedMaterial()
-            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: UIColor.systemBlue.withAlphaComponent(0.25))
+            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: UIColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.35))
             material.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: 0.7)
             visualEntity.model?.materials = [material]
             
-            // Make border more prominent when selected
+            // Brighter blue border for selection
             for edge in borderEdges {
-                edge.model?.materials = [SimpleMaterial(color: .systemBlue, isMetallic: false)]
+                edge.model?.materials = [SimpleMaterial(color: UIColor(red: 0.0, green: 0.6, blue: 1.0, alpha: 0.8), isMetallic: false)]
             }
         }
         else if let color = currentColor {
-            // Apply user's color with appropriate transparency
+            // Apply user's color with improved opacity
             var material = PhysicallyBasedMaterial()
-            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: color.withAlphaComponent(0.35))
+            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: color.withAlphaComponent(0.6))
             
             // Apply finish properties
             let finishProps = paintFinish.materialProperties
@@ -562,23 +634,23 @@ class WallEntity: Identifiable {
             material.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: finishProps.metallic)
             visualEntity.model?.materials = [material]
             
-            // Use a slightly darker version of the same color for border
-            let darkerColor = color.darker(by: 0.3)
+            // Slightly darker border for contrast
+            let darkerColor = color.darker(by: 0.2)
             for edge in borderEdges {
                 edge.model?.materials = [SimpleMaterial(color: darkerColor, isMetallic: false)]
             }
         }
         else {
-            // MODIFIED: Default unselected wall now appears as a more neutral off-white
+            // Default state: neutral white with subtle transparency
             var material = PhysicallyBasedMaterial()
-            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: UIColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.8))
-            material.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: 0.8)
+            material.baseColor = PhysicallyBasedMaterial.BaseColor(tint: UIColor(white: 0.98, alpha: 0.25))
+            material.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: 0.85)
             material.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: 0.0)
             visualEntity.model?.materials = [material]
             
-            // Default border is black
+            // Thin, dark gray border for subtle definition
             for edge in borderEdges {
-                edge.model?.materials = [SimpleMaterial(color: .black, isMetallic: false)]
+                edge.model?.materials = [SimpleMaterial(color: UIColor(white: 0.3, alpha: 0.5), isMetallic: false)]
             }
         }
     }
